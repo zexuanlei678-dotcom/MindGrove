@@ -2,7 +2,7 @@
 import gradio as gr
 from parser import parse_file
 from notes import generate_notes
-from mindmap import build_mindmap_html
+from mindmap import build_mindmap_html, generate_outline
 from questions import generate_questions
 
 
@@ -11,7 +11,8 @@ def process(file):
         return "请先上传课件文件。", "", ""
     raw = parse_file(file.name)
     note_md = generate_notes(raw)
-    mindmap_html = build_mindmap_html(note_md)
+    outline_md = generate_outline(raw)
+    mindmap_html = build_mindmap_html(outline_md)
     qs = generate_questions(raw, n=5)
     blocks = []
     for i, q in enumerate(qs, 1):
