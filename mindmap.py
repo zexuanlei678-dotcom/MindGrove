@@ -15,14 +15,35 @@ def generate_outline(raw_text: str) -> str:
 
 
 def build_mindmap_html(markdown_text: str) -> str:
-    """返回自包含HTML，用markmap-autoloader渲染可折叠导图。"""
+    """返回自包含HTML。Gradio的gr.HTML通过innerHTML插入，其中的<script>不会执行，
+    因此用一个iframe的srcdoc承载完整页面，iframe内的脚本可正常运行。
+    页面内显式用markmap-lib+markmap-view创建并手动fit，确保布局正确。"""
+    import html as html_mod
     safe = markdown_text.replace("</script>", "<\\/script>")
-    return (
-        '<style>.markmap{position:relative;}.markmap>svg{width:100%;height:600px;}</style>'
-        '<div class="markmap">'
-        '<script type="text/template">\n'
-        '---\nmarkmap:\n  colorFreezeLevel: 2\n  maxWidth: 240\n---\n'
+    inner = (
+        "<!DOCTYPE html><html lang='zh'><head><meta charset='utf-8'>"
+        "<style>html,body{margin:0;padding:0;height:100%;}"
+        "#mindmap{width:100%;height:100vh;display:block;}</style></head><body>"
+        '<svg id="mindmap"></svg>'
+        '<script type="text/template" id="md">\n'
+        "---\nmarkmap:\n  colorFreezeLevel: 2\n  maxWidth: 240\n---\n"
         + safe
-        + "\n</script></div>"
-        '<script src="https://cdn.jsdelivr.net/npm/markmap-autoloader@0.18.12/dist/index.min.js"></script>'
+        + "\n</script>"
+        '<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>'
+        '<script src="https://cdn.jsdelivr.net/npm/markmap-view@0.18.12"></script>'
+        '<script src="https://cdn.jsdelivr.net/npm/markmap-lib@0.18.12"></script>'
+        "<script>(function(){"
+        "var md=document.getElementById('md').textContent;"
+        "var t=new markmap.Transformer();"
+        "var root=t.transform(md).root;"
+        "var mm=markmap.Markmap.create('#mindmap',null,root);"
+        "requestAnimationFrame(function(){mm.fit();});"
+        "window.addEventListener('resize',function(){mm.fit();});"
+        "})();</script>"
+        "</body></html>"
+    )
+    srcdoc = html_mod.escape(inner, quote=True)
+    return (
+        '<iframe srcdoc="' + srcdoc + '" '
+        'style="width:100%;height:620px;border:1px solid #d9d5ff;border-radius:8px;"></iframe>'
     )
