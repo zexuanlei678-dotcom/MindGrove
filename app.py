@@ -4,7 +4,7 @@ import gradio as gr
 from parser import parse_file
 from notes import generate_notes
 from mindmap import build_mindmap_html, generate_outline
-from questions import generate_questions
+from questions import generate_quiz
 
 # 紫色系主题（色值：#ffffff/#f3f1ff/#d9d5ff/#b6b1e0/#7a779f）
 PURPLE_THEME = gr.themes.Soft(
@@ -33,6 +33,8 @@ h1 { color: #524f6b; }
 """
 
 NUM_QUIZ = 5
+N_CHOICE = 3
+N_FILL = 2
 
 
 def _make_notes(raw):
@@ -44,19 +46,26 @@ def _make_mindmap(raw):
     return build_mindmap_html(outline_md)
 
 
-def _make_questions(raw):
-    return generate_questions(raw, n=NUM_QUIZ)
+def _make_quiz(raw):
+    return generate_quiz(raw, n_choice=N_CHOICE, n_fill=N_FILL)
+
+
+def _hidden_quiz():
+    """返回一组全部隐藏的自测题组件更新。"""
+    hidden = gr.update(visible=False)
+    return ([hidden] * NUM_QUIZ,           # 题干
+            [hidden] * NUM_QUIZ,           # 选择Radio
+            [hidden] * NUM_QUIZ,           # 填空Textbox
+            [hidden] * NUM_QUIZ)           # 反馈
 
 
 def process(file, progress=gr.Progress()):
-    """返回：笔记、导图、题目数据，以及自测题各组件的更新。"""
+    """返回：笔记、导图、题目state、题干/选择/填空/反馈、提交/重做按钮、得分。"""
+    stems, radios, textboxes, fbs = _hidden_quiz()
     hidden = gr.update(visible=False)
     if file is None:
         return ("请先上传课件文件。", "", [],
-                *[hidden] * NUM_QUIZ,           # 题干
-                *[hidden] * NUM_QUIZ,           # 选项
-                *[hidden] * NUM_QUIZ,           # 反馈
-                hidden, hidden, hidden)         # 提交/重做/得分
+                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden)
 
     # 1. 解析文档
     progress(0.08, desc="正在解析课件...")
@@ -64,20 +73,17 @@ def process(file, progress=gr.Progress()):
         raw = parse_file(file.name)
     except Exception as err:
         return (f"课件解析失败：{err}", "", [],
-                *[hidden] * NUM_QUIZ, *[hidden] * NUM_QUIZ, *[hidden] * NUM_QUIZ,
-                hidden, hidden, hidden)
+                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden)
     if not raw.strip():
         return ("未能从课件中提取到文字，请确认文件内容。", "", [],
-                *[hidden] * NUM_QUIZ, *[hidden] * NUM_QUIZ, *[hidden] * NUM_QUIZ,
-                hidden, hidden, hidden)
+                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden)
 
     # 2. 笔记/导图/题目并行生成
     progress(0.15, desc="正在并行生成笔记、思维导图、自测题...")
     with ThreadPoolExecutor(max_workers=3) as pool:
         f_note = pool.submit(_make_notes, raw)
         f_mm = pool.submit(_make_mindmap, raw)
-        f_q = pool.submit(_make_questions, raw)
-
+        f_q = pool.submit(_make_quiz, raw)
         try:
             note_md = f_note.result()
         except Exception as err:
@@ -93,86 +99,135 @@ def process(file, progress=gr.Progress()):
 
     progress(1.0, desc="整理完成")
 
-    # 组装自测题组件更新
-    stem_updates, radio_updates, fb_updates = [], [], []
+    # 组装自测题组件
+    stem_up, radio_up, text_up, fb_up = [], [], [], []
     for i in range(NUM_QUIZ):
         if i < len(qs):
             q = qs[i]
-            stem_updates.append(gr.update(value=f"**第{i+1}题**　{q['question']}", visible=True))
-            choices = [f"{chr(65+j)}. {opt}" for j, opt in enumerate(q["options"])]
-            radio_updates.append(gr.update(choices=choices, value=None, visible=True))
-            fb_updates.append(gr.update(value="", visible=True))
+            stem_up.append(gr.update(value=f"**第{i+1}题**　{q['question']}", visible=True))
+            fb_up.append(gr.update(value="", visible=True))
+            if q["type"] == "choice":
+                choices = [f"{chr(65+j)}. {opt}" for j, opt in enumerate(q["options"])]
+                radio_up.append(gr.update(choices=choices, value=None,
+                                          interactive=True, visible=True))
+                text_up.append(gr.update(value="", visible=False))
+            else:
+                radio_up.append(gr.update(visible=False))
+                text_up.append(gr.update(value="", label="请输入答案",
+                                         interactive=True, visible=True))
         else:
-            stem_updates.append(hidden)
-            radio_updates.append(hidden)
-            fb_updates.append(hidden)
+            stem_up.append(hidden)
+            radio_up.append(hidden)
+            text_up.append(hidden)
+            fb_up.append(hidden)
 
     quiz_ready = len(qs) > 0
     btn_update = gr.update(visible=quiz_ready)
     score_update = gr.update(value="", visible=False)
-
     return (note_md, mindmap_html, qs,
-            *stem_updates, *radio_updates, *fb_updates,
+            *stem_up, *radio_up, *text_up, *fb_up,
             btn_update, btn_update, score_update)
 
 
-def grade_quiz(qs, *answers):
-    """逐题判分，返回每题反馈、选项（禁用）和总分。"""
-    fb_updates, radio_updates = [], []
+def _fill_is_correct(user: str, acceptable: list) -> bool:
+    """填空题判分：精确匹配优先，辅以双向包含匹配（容忍表述差异）。"""
+    if not user:
+        return False
+    u = user.strip().lower().replace(" ", "")
+    if not u:
+        return False
+    for ans in acceptable:
+        a = ans.strip().lower().replace(" ", "")
+        if not a:
+            continue
+        if u == a:
+            return True
+        # 较短的正确答案用包含匹配，避免单字误判
+        if len(a) >= 2 and (a in u):
+            return True
+        if len(u) >= 3 and (u in a):
+            return True
+    return False
+
+
+def grade_quiz(qs, *values):
+    """values前半为Radio选择，后半为Textbox填空。逐题判分，锁定输入。"""
+    choices_in = values[:NUM_QUIZ]
+    fills_in = values[NUM_QUIZ:]
+
+    fb_up, radio_up, text_up = [], [], []
     correct_count = 0
     for i in range(NUM_QUIZ):
         if i >= len(qs):
-            fb_updates.append(gr.update(visible=False))
-            radio_updates.append(gr.update(visible=False))
+            fb_up.append(gr.update(visible=False))
+            radio_up.append(gr.update(visible=False))
+            text_up.append(gr.update(visible=False))
             continue
         q = qs[i]
-        choices = [f"{chr(65+j)}. {opt}" for j, opt in enumerate(q["options"])]
-        correct_idx = ord(q["answer"]) - 65
-        correct_choice = choices[correct_idx]
-        chosen = answers[i]
-        if chosen == correct_choice:
-            correct_count += 1
-            fb_updates.append(gr.update(
-                value=f"✅ **回答正确**　正确答案：{q['answer']}\n\n解析：{q['explanation']}",
+        if q["type"] == "choice":
+            choices = [f"{chr(65+j)}. {opt}" for j, opt in enumerate(q["options"])]
+            correct_choice = choices[ord(q["answer"]) - 65]
+            chosen = choices_in[i]
+            if chosen == correct_choice:
+                correct_count += 1
+                head = "✅ **回答正确**"
+            elif chosen is None:
+                head = "⚠️ **未作答**"
+            else:
+                head = "❌ **回答错误**"
+            fb_up.append(gr.update(
+                value=f"{head}　正确答案：{q['answer']}\n\n解析：{q['explanation']}",
                 visible=True))
-        elif chosen is None:
-            fb_updates.append(gr.update(
-                value=f"⚠️ **未作答**　正确答案：{q['answer']}\n\n解析：{q['explanation']}",
-                visible=True))
+            radio_up.append(gr.update(choices=choices, value=chosen,
+                                      interactive=False, visible=True))
+            text_up.append(gr.update(visible=False))
         else:
-            fb_updates.append(gr.update(
-                value=f"❌ **回答错误**　正确答案：{q['answer']}\n\n解析：{q['explanation']}",
+            user = fills_in[i]
+            if _fill_is_correct(user, q.get("acceptable", [q["answer"]])):
+                correct_count += 1
+                head = "✅ **回答正确**"
+            elif not user or not user.strip():
+                head = "⚠️ **未作答**"
+            else:
+                head = "❌ **回答错误**"
+            fb_up.append(gr.update(
+                value=f"{head}　参考答案：{q['answer']}\n\n解析：{q['explanation']}",
                 visible=True))
-        # 提交后锁定选项，保留选择
-        radio_updates.append(gr.update(choices=choices, value=chosen,
-                                       interactive=False, visible=True))
+            radio_up.append(gr.update(visible=False))
+            text_up.append(gr.update(value=user, interactive=False, visible=True))
 
     total = min(len(qs), NUM_QUIZ)
     score = (f"### 本次得分：{correct_count}/{total}"
              f"（{round(correct_count/total*100) if total else 0}分）")
-    score_update = gr.update(value=score, visible=True)
-    return (*fb_updates, *radio_updates, score_update)
+    return (*fb_up, *radio_up, *text_up, gr.update(value=score, visible=True))
 
 
 def reset_quiz(qs):
     """清空作答，重新作答。"""
-    fb_updates, radio_updates = [], []
+    fb_up, radio_up, text_up = [], [], []
     for i in range(NUM_QUIZ):
         if i < len(qs):
             q = qs[i]
-            choices = [f"{chr(65+j)}. {opt}" for j, opt in enumerate(q["options"])]
-            fb_updates.append(gr.update(value="", visible=True))
-            radio_updates.append(gr.update(choices=choices, value=None,
-                                           interactive=True, visible=True))
+            fb_up.append(gr.update(value="", visible=True))
+            if q["type"] == "choice":
+                choices = [f"{chr(65+j)}. {opt}" for j, opt in enumerate(q["options"])]
+                radio_up.append(gr.update(choices=choices, value=None,
+                                          interactive=True, visible=True))
+                text_up.append(gr.update(visible=False))
+            else:
+                radio_up.append(gr.update(visible=False))
+                text_up.append(gr.update(value="", interactive=True, visible=True))
         else:
-            fb_updates.append(gr.update(visible=False))
-            radio_updates.append(gr.update(visible=False))
-    return (*fb_updates, *radio_updates, gr.update(value="", visible=False))
+            fb_up.append(gr.update(visible=False))
+            radio_up.append(gr.update(visible=False))
+            text_up.append(gr.update(visible=False))
+    return (*fb_up, *radio_up, *text_up, gr.update(value="", visible=False))
 
 
 with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
     gr.Markdown("# MindGrove\n上传课程课件，自动生成结构化笔记、思维导图与自测题。")
-    file_in = gr.File(label="上传课件（PDF/PPT/Word）", file_types=[".pdf", ".pptx", ".docx"])
+    file_in = gr.File(label="上传课件（PDF/PPT/Word）",
+                      file_types=[".pdf", ".pptx", ".docx", ".ppt", ".doc"])
     btn = gr.Button("开始整理", variant="primary")
 
     with gr.Tab("结构化笔记"):
@@ -181,28 +236,29 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
         mindmap_out = gr.HTML()
     with gr.Tab("自测题"):
         quiz_state = gr.State([])
-        stems, radios, feedbacks = [], [], []
+        stems, radios, textboxes, feedbacks = [], [], [], []
         for i in range(NUM_QUIZ):
             with gr.Group():
                 stems.append(gr.Markdown(visible=False))
                 radios.append(gr.Radio(choices=[], label=f"第{i+1}题", visible=False))
+                textboxes.append(gr.Textbox(visible=False))
                 feedbacks.append(gr.Markdown(visible=False))
         with gr.Row():
             submit_btn = gr.Button("提交答案", variant="primary", visible=False)
             reset_btn = gr.Button("重新作答", visible=False)
         score_out = gr.Markdown(visible=False)
 
-    # 开始整理：输出笔记、导图、题目state、题干/选项/反馈、按钮、得分
+    # 开始整理
     process_outputs = [note_out, mindmap_out, quiz_state,
-                       *stems, *radios, *feedbacks,
+                       *stems, *radios, *textboxes, *feedbacks,
                        submit_btn, reset_btn, score_out]
     btn.click(process, inputs=file_in, outputs=process_outputs)
 
-    # 提交答案：输出反馈、选项（锁定）、得分
-    grade_outputs = [*feedbacks, *radios, score_out]
-    submit_btn.click(grade_quiz, inputs=[quiz_state, *radios], outputs=grade_outputs)
-
-    # 重新作答：输出反馈、选项（解锁）、得分
+    # 提交答案
+    grade_outputs = [*feedbacks, *radios, *textboxes, score_out]
+    submit_btn.click(grade_quiz, inputs=[quiz_state, *radios, *textboxes],
+                     outputs=grade_outputs)
+    # 重新作答
     reset_btn.click(reset_quiz, inputs=quiz_state, outputs=grade_outputs)
 
 
