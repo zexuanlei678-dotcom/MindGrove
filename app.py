@@ -5,6 +5,32 @@ from notes import generate_notes
 from mindmap import build_mindmap_html, generate_outline
 from questions import generate_questions
 
+# 紫色系主题（色值：#ffffff/#f3f1ff/#d9d5ff/#b6b1e0/#7a779f）
+PURPLE_THEME = gr.themes.Soft(
+    primary_hue=gr.themes.Color(
+        c50="#f3f1ff", c100="#e9e5ff", c200="#d9d5ff", c300="#c4bff0",
+        c400="#b6b1e0", c500="#9d97cc", c600="#8a85b8", c700="#7a779f",
+        c800="#656285", c900="#524f6b", c950="#3a384d",
+    ),
+    neutral_hue=gr.themes.Color(
+        c50="#f7f6fa", c100="#f3f1ff", c200="#e9e7f2", c300="#d9d5ff",
+        c400="#b6b1e0", c500="#9a95b8", c600="#7a779f", c700="#656285",
+        c800="#4d4a66", c900="#363447", c950="#24232f",
+    ),
+).set(
+    body_background_fill="#f3f1ff",
+    block_background_fill="#ffffff",
+    button_primary_background_fill="#7a779f",
+    button_primary_background_fill_hover="#656285",
+    button_primary_text_color="#ffffff",
+    border_color_primary="#d9d5ff",
+)
+
+CUSTOM_CSS = """
+h1 { color: #524f6b; }
+.selected, [aria-selected="true"] { color: #7a779f; font-weight: 600; }
+"""
+
 
 def process(file):
     if file is None:
@@ -39,4 +65,4 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(theme=PURPLE_THEME, css=CUSTOM_CSS)
