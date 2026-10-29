@@ -1,8 +1,47 @@
-"""文档解析：支持PDF/PPT/Word，扫描版PDF自动走OCR。"""
+"""文档解析：支持PDF/PPT/Word，扫描版PDF自动走OCR，老格式(.ppt/.doc)自动转换。"""
 import os
+import shutil
+import subprocess
+import tempfile
 import fitz  # PyMuPDF
 from pptx import Presentation
 from docx import Document
+
+
+def _find_soffice() -> str:
+    """查找LibreOffice可执行文件，找不到返回空串。"""
+    exe = shutil.which("soffice")
+    if exe:
+        return exe
+    for candidate in (
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        "/usr/bin/libreoffice",
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    ):
+        if os.path.exists(candidate):
+            return candidate
+    return ""
+
+
+def _convert_office(path: str, target_ext: str) -> str:
+    """用LibreOffice把老格式(.ppt/.doc)转换成.pptx/.docx，返回新文件路径。"""
+    soffice = _find_soffice()
+    if not soffice:
+        raise RuntimeError(
+            f"文件{os.path.basename(path)}是老格式，需要LibreOffice转换，但未检测到，请另存为新格式后重试。"
+        )
+    out_dir = tempfile.mkdtemp(prefix="mg_office_")
+    cmd = [soffice, "--headless", "--convert-to", target_ext,
+           "--outdir", out_dir, path]
+    proc = subprocess.run(cmd, capture_output=True, timeout=120)
+    base = os.path.splitext(os.path.basename(path))[0]
+    out_path = os.path.join(out_dir, base + "." + target_ext)
+    if not os.path.exists(out_path):
+        raise RuntimeError(
+            f"老格式转换失败：{proc.stderr.decode('utf-8', 'ignore')[:200]}"
+        )
+    return out_path
 
 
 def parse_pdf(path: str) -> str:
@@ -60,7 +99,7 @@ def parse_docx(path: str) -> str:
 
 
 def parse_file(path: str) -> str:
-    """根据扩展名分发到对应解析器。"""
+    """根据扩展名分发到对应解析器，老格式(.ppt/.doc)先转换。"""
     ext = os.path.splitext(path)[1].lower()
     if ext == ".pdf":
         return parse_pdf(path)
@@ -68,4 +107,16 @@ def parse_file(path: str) -> str:
         return parse_pptx(path)
     if ext == ".docx":
         return parse_docx(path)
+    if ext == ".ppt":
+        converted = _convert_office(path, "pptx")
+        try:
+            return parse_pptx(converted)
+        finally:
+            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+    if ext == ".doc":
+        converted = _convert_office(path, "docx")
+        try:
+            return parse_docx(converted)
+        finally:
+            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
     raise ValueError(f"暂不支持的文件格式: {ext}")

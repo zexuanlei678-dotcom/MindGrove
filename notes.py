@@ -1,4 +1,5 @@
-"""知识点抽取与结构化笔记生成，支持长文本分段处理。"""
+"""知识点抽取与结构化笔记生成，支持长文本分段并行处理。"""
+from concurrent.futures import ThreadPoolExecutor
 from llm import chat
 from chunker import chunk_text
 
@@ -22,13 +23,31 @@ def _notes_for_part(part: str, idx: int, total: int) -> str:
 
 
 def generate_notes(raw_text: str, progress=None) -> str:
-    """长文本分段生成笔记后合并。progress为可选回调(比例, 描述)。"""
+    """长文本分段并行生成笔记后按原顺序合并。progress为可选回调(比例, 描述)。"""
     chunks = chunk_text(raw_text)
-    parts = []
-    for i, chunk in enumerate(chunks, 1):
+    if len(chunks) == 1:
         if progress:
-            progress((i - 1) / max(len(chunks), 1), f"正在生成笔记（第{i}/{len(chunks)}段）...")
-        parts.append(_notes_for_part(chunk, i, len(chunks)))
+            progress(0.1, "正在生成笔记...")
+        result = _notes_for_part(chunks[0], 1, 1)
+        if progress:
+            progress(1.0, "笔记生成完成")
+        return result.strip()
+
+    if progress:
+        progress(0.05, f"正在并行生成笔记（共{len(chunks)}段）...")
+    done = 0
+
+    def _work(i, chunk):
+        nonlocal done
+        result = _notes_for_part(chunk, i, len(chunks))
+        done += 1
+        if progress:
+            progress(done / len(chunks), f"正在生成笔记（已完成{done}/{len(chunks)}段）...")
+        return result
+
+    with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as pool:
+        parts = list(pool.map(lambda ic: _work(ic[0], ic[1]),
+                             enumerate(chunks, 1)))
     if progress:
         progress(1.0, "笔记生成完成")
     return "\n\n".join(parts).strip()
