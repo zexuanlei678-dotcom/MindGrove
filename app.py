@@ -1,4 +1,5 @@
 """MindGrove主入口：Gradio界面。"""
+from concurrent.futures import ThreadPoolExecutor
 import gradio as gr
 from parser import parse_file
 from notes import generate_notes
@@ -32,13 +33,16 @@ h1 { color: #524f6b; }
 """
 
 
-def process(file):
-    if file is None:
-        return "请先上传课件文件。", "", ""
-    raw = parse_file(file.name)
-    note_md = generate_notes(raw)
+def _make_notes(raw):
+    return generate_notes(raw)
+
+
+def _make_mindmap(raw):
     outline_md = generate_outline(raw)
-    mindmap_html = build_mindmap_html(outline_md)
+    return build_mindmap_html(outline_md)
+
+
+def _make_questions(raw):
     qs = generate_questions(raw, n=5)
     blocks = []
     for i, q in enumerate(qs, 1):
@@ -48,7 +52,44 @@ def process(file):
             f"{q.get('question', '')}\n\n{opts}\n\n"
             f"解析：{q.get('explanation', '')}"
         )
-    return note_md, mindmap_html, "\n\n---\n\n".join(blocks)
+    return "\n\n---\n\n".join(blocks)
+
+
+def process(file, progress=gr.Progress()):
+    if file is None:
+        return "请先上传课件文件。", "", ""
+
+    # 1. 解析文档
+    progress(0.08, desc="正在解析课件...")
+    try:
+        raw = parse_file(file.name)
+    except Exception as err:
+        return f"课件解析失败：{err}", "", ""
+    if not raw.strip():
+        return "未能从课件中提取到文字，请确认文件内容。", "", ""
+
+    # 2. 笔记/导图/题目互不依赖，并行生成
+    progress(0.15, desc="正在并行生成笔记、思维导图、自测题...")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_note = pool.submit(_make_notes, raw)
+        f_mm = pool.submit(_make_mindmap, raw)
+        f_q = pool.submit(_make_questions, raw)
+
+        try:
+            note_md = f_note.result()
+        except Exception as err:
+            note_md = f"笔记生成失败：{err}"
+        try:
+            mindmap_html = f_mm.result()
+        except Exception as err:
+            mindmap_html = f"<div style='padding:16px;color:#7a779f'>思维导图生成失败：{err}</div>"
+        try:
+            q_text = f_q.result() or "题目生成失败，请重试。"
+        except Exception as err:
+            q_text = f"自测题生成失败：{err}"
+
+    progress(1.0, desc="整理完成")
+    return note_md, mindmap_html, q_text
 
 
 with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
@@ -65,4 +106,5 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
 
 
 if __name__ == "__main__":
+    demo.queue(max_size=10, default_concurrency_limit=2)
     demo.launch(theme=PURPLE_THEME, css=CUSTOM_CSS)
