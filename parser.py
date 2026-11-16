@@ -3,7 +3,10 @@ import os
 import shutil
 import subprocess
 import tempfile
-import fitz  # PyMuPDF
+try:
+    import pymupdf as fitz  # 新版PyMuPDF推荐写法
+except ImportError:  # 兼容旧版本
+    import fitz
 from pptx import Presentation
 from docx import Document
 
@@ -99,24 +102,38 @@ def parse_docx(path: str) -> str:
 
 
 def parse_file(path: str) -> str:
-    """根据扩展名分发到对应解析器，老格式(.ppt/.doc)先转换。"""
+    """根据扩展名分发到对应解析器，老格式(.ppt/.doc)先转换。
+    底层库的英文报错统一转成友好中文提示，避免用户看到技术细节。"""
     ext = os.path.splitext(path)[1].lower()
-    if ext == ".pdf":
-        return parse_pdf(path)
-    if ext == ".pptx":
-        return parse_pptx(path)
-    if ext == ".docx":
-        return parse_docx(path)
-    if ext == ".ppt":
-        converted = _convert_office(path, "pptx")
-        try:
-            return parse_pptx(converted)
-        finally:
-            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
-    if ext == ".doc":
-        converted = _convert_office(path, "docx")
-        try:
-            return parse_docx(converted)
-        finally:
-            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
-    raise ValueError(f"暂不支持的文件格式: {ext}")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"文件不存在：{os.path.basename(path)}")
+    if os.path.getsize(path) == 0:
+        raise ValueError(f"文件是空的，没有可整理的内容：{os.path.basename(path)}")
+    try:
+        if ext == ".pdf":
+            return parse_pdf(path)
+        if ext == ".pptx":
+            return parse_pptx(path)
+        if ext == ".docx":
+            return parse_docx(path)
+        if ext == ".ppt":
+            converted = _convert_office(path, "pptx")
+            try:
+                return parse_pptx(converted)
+            finally:
+                shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+        if ext == ".doc":
+            converted = _convert_office(path, "docx")
+            try:
+                return parse_docx(converted)
+            finally:
+                shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+    except (RuntimeError, ValueError, FileNotFoundError):
+        raise
+    except Exception as err:
+        kind = {".pdf": "PDF", ".pptx": "PPT", ".docx": "Word",
+                ".ppt": "PPT", ".doc": "Word"}.get(ext, "文件")
+        raise ValueError(
+            f"{kind}文件无法读取，可能已损坏或格式不规范，请检查后重试。"
+        ) from err
+    raise ValueError(f"暂不支持的文件格式：{ext or '无扩展名'}，请上传PDF/PPT/Word文件")

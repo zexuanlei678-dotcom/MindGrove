@@ -11,6 +11,7 @@ CHOICE_SYSTEM = """你是一名课程出题老师。根据给出的课程内容�
 - options: 4个选项的数组（选项文本本身，不要带A./B./C./D.前缀）
 - answer: 正确选项的字母（A/B/C/D）
 - explanation: 一句话解析
+要求：先在4个选项中确定唯一正确项，answer字母必须与解析结论一致，不能自相矛盾；干扰项要合理但明确错误。
 只输出JSON，不要任何其他文字，不要用代码块包裹。"""
 
 FILL_SYSTEM = """你是一名课程出题老师。根据给出的课程内容生成填空题。
@@ -23,7 +24,7 @@ FILL_SYSTEM = """你是一名课程出题老师。根据给出的课程内容生
 
 CHOICE_PART = """你是一名课程出题老师。下面是一份完整课件的其中一部分（第{idx}部分，共{total}部分）。
 请只根据这部分内容生成单项选择题，严格输出JSON数组，每个元素含question/options/answer/explanation，
-选项文本不要带A./B./C./D.前缀，只输出JSON。"""
+选项文本不要带A./B./C./D.前缀，answer字母必须与解析结论一致，不能自相矛盾，只输出JSON。"""
 
 FILL_PART = """你是一名课程出题老师。下面是一份完整课件的其中一部分（第{idx}部分，共{total}部分）。
 请只根据这部分内容生成填空题，严格输出JSON数组，每个元素含question/answer/acceptable/explanation，
@@ -84,7 +85,8 @@ def _parse_fills(raw: str) -> list:
             continue
         question = str(item.get("question", "")).strip()
         answer = str(item.get("answer", "")).strip()
-        if not question or not answer or "____" not in question:
+        # 只保留恰好一个空的填空题，多空题不符合规范直接丢弃
+        if not question or not answer or question.count("____") != 1:
             continue
         acceptable = item.get("acceptable", [])
         if not isinstance(acceptable, list) or not acceptable:
