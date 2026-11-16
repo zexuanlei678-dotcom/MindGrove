@@ -5,6 +5,7 @@ from parser import parse_file
 from notes import generate_notes
 from mindmap import build_mindmap_html, generate_outline
 from questions import generate_quiz
+from splash import build_splash_html
 
 # 紫色系主题（色值：#ffffff/#f3f1ff/#d9d5ff/#b6b1e0/#7a779f）
 PURPLE_THEME = gr.themes.Soft(
@@ -30,6 +31,69 @@ PURPLE_THEME = gr.themes.Soft(
 CUSTOM_CSS = """
 h1 { color: #524f6b; }
 .selected, [aria-selected="true"] { color: #7a779f; font-weight: 600; }
+
+/* ===== 启动页遮罩 ===== */
+.mg-splash-root { display: contents; }
+.mg-skip-check { display: none; }
+.mg-splash {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  animation: mg-auto-hide 4.2s ease forwards;
+}
+.mg-splash-bg {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  animation: mg-bg-zoom 6s ease forwards;
+}
+.mg-splash-veil {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(40,36,66,.35) 0%,
+              rgba(122,119,159,.12) 45%, rgba(243,241,255,.55) 100%);
+}
+.mg-splash-content {
+  position: relative; text-align: center;
+  animation: mg-content-in 1.1s cubic-bezier(.22,1,.36,1) both;
+}
+.mg-brand {
+  font-size: 72px; font-weight: 700; letter-spacing: 4px; color: #ffffff;
+  text-shadow: 0 0 24px rgba(182,177,224,.9), 0 4px 30px rgba(90,82,130,.6);
+}
+.mg-tagline {
+  margin-top: 14px; font-size: 20px; letter-spacing: 6px;
+  color: #f3f1ff; text-shadow: 0 2px 12px rgba(90,82,130,.6);
+}
+.mg-enter {
+  display: inline-block; margin-top: 40px; padding: 12px 42px;
+  border-radius: 999px; border: 1px solid rgba(255,255,255,.7);
+  color: #fff; font-size: 16px; letter-spacing: 4px; cursor: pointer;
+  background: rgba(122,119,159,.35); backdrop-filter: blur(6px);
+  transition: all .25s ease;
+  animation: mg-btn-pulse 2.2s ease-in-out infinite;
+}
+.mg-enter:hover { background: rgba(122,119,159,.7); transform: translateY(-2px); }
+@keyframes mg-auto-hide {
+  0%, 78% { opacity: 1; visibility: visible; pointer-events: auto; }
+  100% { opacity: 0; visibility: hidden; pointer-events: none; }
+}
+@keyframes mg-bg-zoom {
+  from { transform: scale(1.05); }
+  to { transform: scale(1.15); }
+}
+@keyframes mg-content-in {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes mg-btn-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217,213,255,.5); }
+  50% { box-shadow: 0 0 0 12px rgba(217,213,255,0); }
+}
+#mg-skip:checked ~ .mg-splash {
+  animation: mg-quick-hide .45s ease forwards;
+}
+@keyframes mg-quick-hide {
+  to { opacity: 0; visibility: hidden; pointer-events: none; }
+}
 """
 
 NUM_QUIZ = 5
@@ -225,6 +289,7 @@ def reset_quiz(qs):
 
 
 with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
+    gr.HTML(build_splash_html())
     gr.Markdown("# MindGrove\n上传课程课件，自动生成结构化笔记、思维导图与自测题。")
     file_in = gr.File(label="上传课件（PDF/PPT/Word）",
                       file_types=[".pdf", ".pptx", ".docx", ".ppt", ".doc"])
