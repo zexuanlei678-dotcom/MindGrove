@@ -129,19 +129,19 @@ def process(file, progress=gr.Progress()):
     stems, radios, textboxes, fbs = _hidden_quiz()
     hidden = gr.update(visible=False)
     if file is None:
-        return ("请先上传课件文件。", "", [],
-                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden)
+        return ("", "请先上传课件文件。", "", [],
+                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden, hidden)
 
     # 1. 解析文档
     progress(0.08, desc="正在解析课件...")
     try:
         raw = parse_file(file.name)
     except Exception as err:
-        return (f"课件解析失败：{err}", "", [],
-                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden)
+        return ("", f"课件解析失败：{err}", "", [],
+                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden, hidden)
     if not raw.strip():
-        return ("未能从课件中提取到文字，请确认文件内容。", "", [],
-                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden)
+        return ("", "未能从课件中提取到文字，请确认文件内容。", "", [],
+                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden, hidden)
 
     # 2. 笔记/导图/题目并行生成
     progress(0.15, desc="正在并行生成笔记、思维导图、自测题...")
@@ -188,10 +188,11 @@ def process(file, progress=gr.Progress()):
 
     quiz_ready = len(qs) > 0
     btn_update = gr.update(visible=quiz_ready)
+    edit_btn_update = gr.update(visible=True)
     score_update = gr.update(value="", visible=False)
-    return (note_md, mindmap_html, qs,
+    return (note_md, note_md, mindmap_html, qs,
             *stem_up, *radio_up, *text_up, *fb_up,
-            btn_update, btn_update, score_update)
+            btn_update, btn_update, edit_btn_update, score_update)
 
 
 def _fill_is_correct(user: str, acceptable: list) -> bool:
@@ -289,6 +290,23 @@ def reset_quiz(qs):
     return (*fb_up, *radio_up, *text_up, gr.update(value="", visible=False))
 
 
+def enter_edit(note_text):
+    """进入编辑模式：显示编辑框并加载当前笔记。"""
+    return (gr.update(visible=False),
+            gr.update(value=note_text, visible=True),
+            gr.update(visible=False),
+            gr.update(visible=True))
+
+
+def save_edit(edited):
+    """保存修改：把编辑内容写回权威state与Markdown，退出编辑模式。"""
+    return (edited,
+            gr.update(value=edited, visible=True),
+            gr.update(visible=False),
+            gr.update(visible=True),
+            gr.update(visible=False))
+
+
 def export_one(kind, notes, mm_html, quiz):
     """生成导出文件并返回对应文件路径，供DownloadButton下载。"""
     note_p, mm_p, quiz_p, zip_p = export_bundle(notes, mm_html, quiz)
@@ -304,7 +322,13 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
     btn = gr.Button("开始整理", variant="primary")
 
     with gr.Tab("结构化笔记"):
+        note_state = gr.State("")
         note_out = gr.Markdown()
+        note_edit = gr.Textbox(label="编辑笔记（支持Markdown语法）",
+                               lines=22, visible=False)
+        with gr.Row():
+            edit_btn = gr.Button("编辑笔记", visible=False)
+            save_btn = gr.Button("保存修改", variant="primary", visible=False)
     with gr.Tab("思维导图"):
         mindmap_out = gr.HTML()
     with gr.Tab("自测题"):
@@ -330,10 +354,17 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
             dl_zip = gr.DownloadButton("一键打包下载（ZIP）", variant="primary")
 
     # 开始整理
-    process_outputs = [note_out, mindmap_out, quiz_state,
+    process_outputs = [note_state, note_out, mindmap_out, quiz_state,
                        *stems, *radios, *textboxes, *feedbacks,
-                       submit_btn, reset_btn, score_out]
+                       submit_btn, reset_btn, edit_btn, score_out]
     btn.click(process, inputs=file_in, outputs=process_outputs)
+
+    # 人工校验：进入编辑 / 保存修改
+    edit_btn.click(enter_edit, inputs=note_state,
+                   outputs=[note_out, note_edit, edit_btn, save_btn])
+    save_btn.click(save_edit, inputs=note_edit,
+                   outputs=[note_state, note_out, note_edit,
+                            edit_btn, save_btn])
 
     # 提交答案
     grade_outputs = [*feedbacks, *radios, *textboxes, score_out]
@@ -342,8 +373,8 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
     # 重新作答
     reset_btn.click(reset_quiz, inputs=quiz_state, outputs=grade_outputs)
 
-    # 成果导出：点击生成对应文件并下载
-    export_inputs = [note_out, mindmap_out, quiz_state]
+    # 成果导出：点击生成对应文件并下载（笔记用编辑后的权威state）
+    export_inputs = [note_state, mindmap_out, quiz_state]
     dl_note.click(lambda n, m, q: export_one("note", n, m, q),
                   inputs=export_inputs, outputs=dl_note)
     dl_mm.click(lambda n, m, q: export_one("mindmap", n, m, q),
