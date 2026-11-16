@@ -6,6 +6,7 @@ from notes import generate_notes
 from mindmap import build_mindmap_html, generate_outline
 from questions import generate_quiz
 from splash import build_splash_html
+from exporter import export_bundle
 
 # 紫色系主题（色值：#ffffff/#f3f1ff/#d9d5ff/#b6b1e0/#7a779f）
 PURPLE_THEME = gr.themes.Soft(
@@ -288,6 +289,13 @@ def reset_quiz(qs):
     return (*fb_up, *radio_up, *text_up, gr.update(value="", visible=False))
 
 
+def export_one(kind, notes, mm_html, quiz):
+    """生成导出文件并返回对应文件路径，供DownloadButton下载。"""
+    note_p, mm_p, quiz_p, zip_p = export_bundle(notes, mm_html, quiz)
+    return {"note": note_p, "mindmap": mm_p,
+            "quiz": quiz_p, "zip": zip_p}[kind]
+
+
 with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
     gr.HTML(build_splash_html())
     gr.Markdown("# MindGrove\n上传课程课件，自动生成结构化笔记、思维导图与自测题。")
@@ -313,6 +321,14 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
             reset_btn = gr.Button("重新作答", visible=False)
         score_out = gr.Markdown(visible=False)
 
+    with gr.Group():
+        gr.Markdown("### 成果导出\n整理完成后，可分别下载或一键打包下载。")
+        with gr.Row():
+            dl_note = gr.DownloadButton("下载笔记（Markdown）", variant="secondary")
+            dl_mm = gr.DownloadButton("下载思维导图（HTML）", variant="secondary")
+            dl_quiz = gr.DownloadButton("下载自测题（Markdown）", variant="secondary")
+            dl_zip = gr.DownloadButton("一键打包下载（ZIP）", variant="primary")
+
     # 开始整理
     process_outputs = [note_out, mindmap_out, quiz_state,
                        *stems, *radios, *textboxes, *feedbacks,
@@ -325,6 +341,17 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
                      outputs=grade_outputs)
     # 重新作答
     reset_btn.click(reset_quiz, inputs=quiz_state, outputs=grade_outputs)
+
+    # 成果导出：点击生成对应文件并下载
+    export_inputs = [note_out, mindmap_out, quiz_state]
+    dl_note.click(lambda n, m, q: export_one("note", n, m, q),
+                  inputs=export_inputs, outputs=dl_note)
+    dl_mm.click(lambda n, m, q: export_one("mindmap", n, m, q),
+                inputs=export_inputs, outputs=dl_mm)
+    dl_quiz.click(lambda n, m, q: export_one("quiz", n, m, q),
+                  inputs=export_inputs, outputs=dl_quiz)
+    dl_zip.click(lambda n, m, q: export_one("zip", n, m, q),
+                 inputs=export_inputs, outputs=dl_zip)
 
 
 if __name__ == "__main__":
