@@ -78,6 +78,12 @@ NUM_QUIZ = 5
 N_CHOICE = 3
 N_FILL = 2
 
+# 公式分隔符：块级$$...$$换行显示，行内$...$内嵌显示（默认仅支持$$，需显式补上$）
+LATEX_DELIMITERS = [
+    {"left": "$$", "right": "$$", "display": True},
+    {"left": "$", "right": "$", "display": False},
+]
+
 
 def _make_notes(raw):
     return generate_notes(raw)
@@ -335,7 +341,7 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
 
     with gr.Tab("结构化笔记"):
         note_state = gr.State("")
-        note_out = gr.Markdown()
+        note_out = gr.Markdown(latex_delimiters=LATEX_DELIMITERS)
         note_edit = gr.Textbox(label="编辑笔记（支持Markdown语法）",
                                lines=22, visible=False)
         with gr.Row():
