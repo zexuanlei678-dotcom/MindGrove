@@ -5,7 +5,7 @@ from parser import parse_file
 from notes import generate_notes
 from mindmap import build_mindmap_html, generate_outline
 from questions import generate_quiz
-from splash import build_splash_html
+from splash import splash_bg_data, BRAND, TAGLINE
 from exporter import export_bundle
 
 # 紫色系主题（色值：#ffffff/#f3f1ff/#d9d5ff/#b6b1e0/#7a779f）
@@ -33,69 +33,46 @@ CUSTOM_CSS = """
 h1 { color: #524f6b; }
 .selected, [aria-selected="true"] { color: #7a779f; font-weight: 600; }
 
-/* ===== 启动页遮罩 ===== */
-.mg-splash-root { display: contents; }
-.mg-skip-check { display: none; }
-.mg-splash {
+/* 隐藏Gradio默认footer（API入口、Gradio标识、英文设置面板入口） */
+footer { display: none !important; }
+
+/* 隐藏Gradio自带浮动进度条（absolute浮层会与状态文字重叠），进度统一由状态文字承载 */
+.wrap.translucent, .progress-level { display: none !important; }
+
+/* ===== 启动页全屏遮罩（Gradio组件，visible控制，进入后永久隐藏） ===== */
+#mg-splash {
   position: fixed; inset: 0; z-index: 9999;
-  display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
-  animation: mg-auto-hide 4.2s ease forwards;
-}
-.mg-splash-bg {
-  position: absolute; inset: 0;
+  margin: 0; padding: 0;
+  border: none !important; box-shadow: none !important;
+  border-radius: 0 !important;
+  background-image: url('data:image/jpeg;base64,__SPLASH_BG__');
   background-size: cover; background-position: center;
-  animation: mg-bg-zoom 6s ease forwards;
+  overflow: hidden;
 }
-.mg-splash-veil {
+#mg-splash .gr-group, #mg-splash .styler {
+  background: transparent; border: none !important;
+  box-shadow: none !important; border-radius: 0; margin: 0;
+}
+#mg-splash .styler {
   position: absolute; inset: 0;
-  background: linear-gradient(180deg, rgba(40,36,66,.35) 0%,
-              rgba(122,119,159,.12) 45%, rgba(243,241,255,.55) 100%);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px;
 }
-.mg-splash-content {
-  position: relative; text-align: center;
-  animation: mg-content-in 1.1s cubic-bezier(.22,1,.36,1) both;
+#mg-splash .block, #mg-splash .block .wrap, #mg-splash .prose {
+  padding: 0; margin: 0; background: transparent !important;
+  border: none !important; box-shadow: none !important;
 }
-.mg-brand {
-  font-size: 72px; font-weight: 700; letter-spacing: 4px; color: #ffffff;
+#mg-splash-brand p {
+  color: #ffffff !important; font-size: 60px; font-weight: 700;
+  letter-spacing: 4px; margin: 0;
   text-shadow: 0 0 24px rgba(182,177,224,.9), 0 4px 30px rgba(90,82,130,.6);
 }
-.mg-tagline {
-  margin-top: 14px; font-size: 20px; letter-spacing: 6px;
-  color: #f3f1ff; text-shadow: 0 2px 12px rgba(90,82,130,.6);
+#mg-splash-tagline p {
+  color: #f3f1ff !important; font-size: 18px; letter-spacing: 6px;
+  margin: 0; text-shadow: 0 2px 12px rgba(90,82,130,.6);
 }
-.mg-enter {
-  display: inline-block; margin-top: 40px; padding: 12px 42px;
-  border-radius: 999px; border: 1px solid rgba(255,255,255,.7);
-  color: #fff; font-size: 16px; letter-spacing: 4px; cursor: pointer;
-  background: rgba(122,119,159,.35); backdrop-filter: blur(6px);
-  transition: all .25s ease;
-  animation: mg-btn-pulse 2.2s ease-in-out infinite;
-}
-.mg-enter:hover { background: rgba(122,119,159,.7); transform: translateY(-2px); }
-@keyframes mg-auto-hide {
-  0%, 78% { opacity: 1; visibility: visible; pointer-events: auto; }
-  100% { opacity: 0; visibility: hidden; pointer-events: none; }
-}
-@keyframes mg-bg-zoom {
-  from { transform: scale(1.05); }
-  to { transform: scale(1.15); }
-}
-@keyframes mg-content-in {
-  from { opacity: 0; transform: translateY(24px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes mg-btn-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(217,213,255,.5); }
-  50% { box-shadow: 0 0 0 12px rgba(217,213,255,0); }
-}
-#mg-skip:checked ~ .mg-splash {
-  animation: mg-quick-hide .45s ease forwards;
-}
-@keyframes mg-quick-hide {
-  to { opacity: 0; visibility: hidden; pointer-events: none; }
-}
-"""
+#mg-splash-btn { margin-top: 22px; padding: 10px 40px; }
+""".replace("__SPLASH_BG__", splash_bg_data())
 
 NUM_QUIZ = 5
 N_CHOICE = 3
@@ -124,27 +101,41 @@ def _hidden_quiz():
             [hidden] * NUM_QUIZ)           # 反馈
 
 
+def _error_return(message, stems, radios, textboxes, fbs, hidden):
+    """错误时的完整29位置返回（status显示错误，其余安全兜底）。"""
+    return ("", message, "", [],
+            *stems, *radios, *textboxes, *fbs,
+            hidden, hidden, hidden,
+            gr.update(value=message, visible=True),
+            hidden)
+
+
 def process(file, progress=gr.Progress()):
-    """返回：笔记、导图、题目state、题干/选择/填空/反馈、提交/重做按钮、得分。"""
+    """生成器：实时更新全局状态提示，最终输出笔记、导图、题目三件套。"""
     stems, radios, textboxes, fbs = _hidden_quiz()
     hidden = gr.update(visible=False)
     if file is None:
-        return ("", "请先上传课件文件。", "", [],
-                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden, hidden)
+        yield _error_return("请先上传课件文件。", stems, radios,
+                            textboxes, fbs, hidden)
+        return
 
     # 1. 解析文档
     progress(0.08, desc="正在解析课件...")
+    yield _mid("正在上传并解析课件，请稍候...")
     try:
         raw = parse_file(file.name)
     except Exception as err:
-        return ("", f"课件解析失败：{err}", "", [],
-                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden, hidden)
+        yield _error_return(f"课件解析失败：{err}", stems, radios,
+                            textboxes, fbs, hidden)
+        return
     if not raw.strip():
-        return ("", "未能从课件中提取到文字，请确认文件内容。", "", [],
-                *stems, *radios, *textboxes, *fbs, hidden, hidden, hidden, hidden)
+        yield _error_return("未能从课件中提取到文字，请确认文件内容。",
+                            stems, radios, textboxes, fbs, hidden)
+        return
 
     # 2. 笔记/导图/题目并行生成
     progress(0.15, desc="正在并行生成笔记、思维导图、自测题...")
+    yield _mid("解析完成，正在并行生成笔记、思维导图、自测题...")
     with ThreadPoolExecutor(max_workers=3) as pool:
         f_note = pool.submit(_make_notes, raw)
         f_mm = pool.submit(_make_mindmap, raw)
@@ -188,11 +179,25 @@ def process(file, progress=gr.Progress()):
 
     quiz_ready = len(qs) > 0
     btn_update = gr.update(visible=quiz_ready)
-    edit_btn_update = gr.update(visible=True)
     score_update = gr.update(value="", visible=False)
-    return (note_md, note_md, mindmap_html, qs,
-            *stem_up, *radio_up, *text_up, *fb_up,
-            btn_update, btn_update, edit_btn_update, score_update)
+    status_update = gr.update(value="**整理完成**，可切换上方标签查看，并在下方导出下载。",
+                              visible=True)
+    yield (note_md, note_md, mindmap_html, qs,
+           *stem_up, *radio_up, *text_up, *fb_up,
+           btn_update, btn_update, btn_update,
+           status_update, score_update)
+
+
+# 输出组件总数29，status_out的索引位置27（0-based）
+_N_OUTPUT = 29
+_STATUS_IDX = 27
+
+
+def _mid(text):
+    """中间进度：仅更新status_out，其余组件保持不变。"""
+    updates = [gr.update()] * _N_OUTPUT
+    updates[_STATUS_IDX] = gr.update(value=text, visible=True)
+    return tuple(updates)
 
 
 def _fill_is_correct(user: str, acceptable: list) -> bool:
@@ -315,11 +320,18 @@ def export_one(kind, notes, mm_html, quiz):
 
 
 with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
-    gr.HTML(build_splash_html())
+    # 启动页：Gradio组件，点进入应用后永久隐藏，切换主题不重显
+    with gr.Group(elem_id="mg-splash", visible=True) as splash_group:
+        gr.Markdown(BRAND, elem_id="mg-splash-brand")
+        gr.Markdown(TAGLINE, elem_id="mg-splash-tagline")
+        enter_btn = gr.Button("进入应用", variant="primary", elem_id="mg-splash-btn")
+
     gr.Markdown("# MindGrove\n上传课程课件，自动生成结构化笔记、思维导图与自测题。")
     file_in = gr.File(label="上传课件（PDF/PPT/Word）",
                       file_types=[".pdf", ".pptx", ".docx", ".ppt", ".doc"])
     btn = gr.Button("开始整理", variant="primary")
+    # 全局状态提示：始终在当前页面可见，无需切到思维导图tab
+    status_out = gr.Markdown("")
 
     with gr.Tab("结构化笔记"):
         note_state = gr.State("")
@@ -353,10 +365,13 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
             dl_quiz = gr.DownloadButton("下载自测题（Markdown）", variant="secondary")
             dl_zip = gr.DownloadButton("一键打包下载（ZIP）", variant="primary")
 
-    # 开始整理
+    # 进入应用：隐藏启动页
+    enter_btn.click(lambda: gr.update(visible=False), outputs=splash_group)
+
+    # 开始整理（生成器，实时更新status_out）
     process_outputs = [note_state, note_out, mindmap_out, quiz_state,
                        *stems, *radios, *textboxes, *feedbacks,
-                       submit_btn, reset_btn, edit_btn, score_out]
+                       submit_btn, reset_btn, edit_btn, status_out, score_out]
     btn.click(process, inputs=file_in, outputs=process_outputs)
 
     # 人工校验：进入编辑 / 保存修改
@@ -367,7 +382,7 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
                             edit_btn, save_btn])
 
     # 提交答案
-    grade_outputs = [*feedbacks, *radios, *textboxes, score_out]
+    grade_outputs = [*feedbacks, *radios, *text_up, score_out]
     submit_btn.click(grade_quiz, inputs=[quiz_state, *radios, *textboxes],
                      outputs=grade_outputs)
     # 重新作答
