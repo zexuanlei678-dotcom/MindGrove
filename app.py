@@ -382,7 +382,7 @@ with gr.Blocks(title="MindGrove - AI学习资料整理助手") as demo:
                             edit_btn, save_btn])
 
     # 提交答案
-    grade_outputs = [*feedbacks, *radios, *text_up, score_out]
+    grade_outputs = [*feedbacks, *radios, *textboxes, score_out]
     submit_btn.click(grade_quiz, inputs=[quiz_state, *radios, *textboxes],
                      outputs=grade_outputs)
     # 重新作答
