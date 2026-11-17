@@ -10,3 +10,5 @@ venv/
 *.tmp.png
 uploads/
 eval/
+启动MindGrove.bat
+test_grade_fill.py
